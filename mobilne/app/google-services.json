@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "280864555023",
+    "project_id": "fitmap-671ec",
+    "storage_bucket": "fitmap-671ec.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:280864555023:android:e6f62862c91a287108237a",
+        "android_client_info": {
+          "package_name": "veljko.najdanovic19273.fitmap"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAgR4aL5JV8H3WRL67ueAEfxDUg7pOOzdA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
