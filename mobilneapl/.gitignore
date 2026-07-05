@@ -1,0 +1,32 @@
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+
+# Build outputs
+/app/build/
+*.apk
+*.ap_
+*.dex
+*.class
+bin/
+gen/
+out/
+release/
+
+# Log files - samo specifični log fajlovi
+*.log
+build_error.txt
+build_log.txt
+
+# Google Services - VAŽNO: ne ignorišemo google-services.json jer je potreban
+# google-services.json
+
+# Gradle files
+.gradle/
+.kotlin/

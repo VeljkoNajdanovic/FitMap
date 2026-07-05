@@ -35,13 +35,10 @@ fun FilterBottomSheet(
     var selectedRadius by remember { mutableStateOf(RadiusOption.fromMeters(currentFilter.radiusInMeters)) }
     var minRating by remember { mutableFloatStateOf(currentFilter.minRating) }
 
-    // IZMENJENO: Uklonjen LaunchedEffect - NE primenjuj filter automatski
-    // Filter se primenjuje SAMO kada korisnik klikne dugme "Pretraži"
-
     // Funkcija za primenu filtera
     val applyFilters = {
         val hasSearch = searchQuery.trim().isNotBlank()
-        val hasOtherFilters = selectedRadius != RadiusOption.ALL || minRating > 0f
+        val hasOtherFilters = selectedRadius != RadiusOption.ALL || minRating > 0f || selectedType != null
 
         if (hasSearch || hasOtherFilters) {
             val newFilter = FilterState(

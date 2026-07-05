@@ -4,6 +4,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.media.RingtoneManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.google.firebase.messaging.FirebaseMessagingService
@@ -55,9 +56,13 @@ class FitMapMessagingService : FirebaseMessagingService() {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 CHANNEL_NAME,
-                NotificationManager.IMPORTANCE_DEFAULT
+                NotificationManager.IMPORTANCE_HIGH  // Promenio sa DEFAULT na HIGH
             ).apply {
                 description = "Obaveštenja o objektima i korisnicima u blizini"
+                enableLights(true)
+                enableVibration(true)
+                setShowBadge(true)
+                vibrationPattern = longArrayOf(0, 500, 200, 500)
             }
 
             val notificationManager = getSystemService(NotificationManager::class.java)
@@ -77,17 +82,24 @@ class FitMapMessagingService : FirebaseMessagingService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
+        val defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(body)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)  // Promenio sa DEFAULT na HIGH
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setSound(defaultSoundUri)
+            .setVibrate(longArrayOf(0, 500, 200, 500))
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)  // Prikazuje se na lock screen-u
+            .setDefaults(NotificationCompat.DEFAULT_ALL)  // Koristi sve default postavke
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))  // Prikazuje ceo tekst
             .build()
 
         val notificationManager = getSystemService(NotificationManager::class.java)
         notificationManager.notify(System.currentTimeMillis().toInt(), notification)
     }
 }
-

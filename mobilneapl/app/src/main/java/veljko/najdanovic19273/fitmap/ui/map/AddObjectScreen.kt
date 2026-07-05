@@ -21,12 +21,12 @@ import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.firebase.auth.FirebaseAuth
-import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.maps.android.compose.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import veljko.najdanovic19273.fitmap.data.model.ObjectType
 import veljko.najdanovic19273.fitmap.util.getObjectTypeName
 import veljko.najdanovic19273.fitmap.util.CloudinaryHelper
@@ -229,26 +229,55 @@ fun AddObjectScreen(
                 }
             }
 
-            // Naslov
-            OutlinedTextField(
-                value = title,
-                onValueChange = { title = it },
-                label = { Text(if (parentGymId != null) "Naziv objekta" else "Naziv teretane") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                placeholder = { Text(if (parentGymId != null) "npr. Bench press, Traka za trčanje..." else "npr. Gym 011, Iron Paradise...") }
-            )
+            // Naslov - SAKRIVENO za CROWDED_AREA i TRAINER_RECOMMENDATION
+            if (selectedType != ObjectType.CROWDED_AREA && selectedType != ObjectType.TRAINER_RECOMMENDATION) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text(if (parentGymId != null) "Naziv objekta" else "Naziv teretane") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text(if (parentGymId != null) "npr. Bench press, Traka za trčanje..." else "npr. Gym 011, Iron Paradise...") }
+                )
+            } else {
+                // Za CROWDED_AREA i TRAINER_RECOMMENDATION automatski postavi naziv
+                LaunchedEffect(selectedType) {
+                    title = when (selectedType) {
+                        ObjectType.CROWDED_AREA -> "Gužva u sali"
+                        ObjectType.TRAINER_RECOMMENDATION -> "Savet od trenera"
+                        else -> ""
+                    }
+                }
+            }
 
             // Opis
             OutlinedTextField(
                 value = description,
                 onValueChange = { description = it },
-                label = { Text("Opis") },
+                label = {
+                    Text(
+                        when (selectedType) {
+                            ObjectType.CROWDED_AREA -> "Koliko je sala puna?"
+                            ObjectType.TRAINER_RECOMMENDATION -> "Detalji saveta"
+                            ObjectType.EVENT -> "Opis događaja"
+                            else -> "Opis"
+                        }
+                    )
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(120.dp),
                 maxLines = 5,
-                placeholder = { Text("Opišite detalje...") }
+                placeholder = {
+                    Text(
+                        when (selectedType) {
+                            ObjectType.CROWDED_AREA -> "npr. Veoma puno, teško naći slobodnu spravu..."
+                            ObjectType.TRAINER_RECOMMENDATION -> "npr. Dobar savet za povećanje snage..."
+                            ObjectType.EVENT -> "npr. Trening sesija, takmičenje..."
+                            else -> "Opišite detalje..."
+                        }
+                    )
+                }
             )
 
             // Tip objekta - SAMO ako dodajemo u teretanu
@@ -279,45 +308,47 @@ fun AddObjectScreen(
                 }
             }
 
-            // Slika
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(200.dp)
-            ) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    if (imageUri != null) {
-                        AsyncImage(
-                            model = imageUri,
-                            contentDescription = "Slika objekta",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Fit, // Prikazuje celu sliku bez sečenja
-                            alignment = Alignment.Center
-                        )
-                    } else {
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                Icons.Default.Add,
-                                contentDescription = null,
-                                modifier = Modifier.size(48.dp),
-                                tint = MaterialTheme.colorScheme.primary
+            // Slika - SAKRIVENO za CROWDED_AREA i TRAINER_RECOMMENDATION
+            if (selectedType != ObjectType.CROWDED_AREA && selectedType != ObjectType.TRAINER_RECOMMENDATION) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(200.dp)
+                ) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        if (imageUri != null) {
+                            AsyncImage(
+                                model = imageUri,
+                                contentDescription = "Slika objekta",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Fit,
+                                alignment = Alignment.Center
                             )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text("Dodaj sliku (opciono)")
+                        } else {
+                            Column(
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    Icons.Default.Add,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(48.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("Dodaj sliku (opciono)")
+                            }
                         }
-                    }
 
-                    Button(
-                        onClick = { imagePickerLauncher.launch("image/*") },
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(8.dp)
-                    ) {
-                        Text("Izaberi")
+                        Button(
+                            onClick = { imagePickerLauncher.launch("image/*") },
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(8.dp)
+                        ) {
+                            Text("Izaberi")
+                        }
                     }
                 }
             }
@@ -362,8 +393,13 @@ fun AddObjectScreen(
             // Dugme za dodavanje
             Button(
                 onClick = {
-                    if (title.isBlank()) {
+                    // Validacija - naslov je obavezan SAMO ako nije CROWDED_AREA
+                    if (selectedType != ObjectType.CROWDED_AREA && title.isBlank()) {
                         errorMessage = "Unesite naziv"
+                        return@Button
+                    }
+                    if (description.isBlank()) {
+                        errorMessage = "Unesite opis"
                         return@Button
                     }
                     if (currentUser == null) {
@@ -376,8 +412,19 @@ fun AddObjectScreen(
 
                     coroutineScope.launch {
                         try {
-                            // Upload slike ako postoji
-                            val imageUrl = if (imageUri != null) {
+                            // PRVO učitaj korisničke podatke iz Firestore
+                            val userSnapshot = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                                .collection(veljko.najdanovic19273.fitmap.util.Constants.USERS_COLLECTION)
+                                .document(currentUser.uid)
+                                .get()
+                                .await()
+
+                            val username = userSnapshot.getString("username") ?: "Nepoznat korisnik"
+
+                            // Upload slike SAMO ako je potrebno i ako postoji
+                            val imageUrl = if (imageUri != null &&
+                                selectedType != ObjectType.CROWDED_AREA &&
+                                selectedType != ObjectType.TRAINER_RECOMMENDATION) {
                                 Log.d("AddObjectScreen", "Uplodujem sliku kvaliteta: ${selectedQuality.displayName}")
                                 uploadProgress = 0.3f
 
@@ -402,19 +449,19 @@ fun AddObjectScreen(
 
                             // Dodaj objekat u Firestore
                             mapViewModel.addMapObject(
-                                title = title,
+                                title = if (selectedType == ObjectType.CROWDED_AREA) "Gužva u sali" else title,
                                 description = description,
                                 type = selectedType,
                                 latitude = markerPosition.latitude,
                                 longitude = markerPosition.longitude,
                                 authorId = currentUser.uid,
-                                authorName = currentUser.displayName ?: "Nepoznat korisnik",
+                                authorName = username, // Koristi username iz Firestore
                                 imageUrl = imageUrl,
                                 parentGymId = parentGymId
                             )
 
                             uploadProgress = 1f
-                            Log.d("AddObjectScreen", "Objekat uspešno dodat sa slikom: $imageUrl")
+                            Log.d("AddObjectScreen", "Objekat uspešno dodat")
 
                             // Vrati se nazad
                             navController.navigateUp()
@@ -494,7 +541,7 @@ fun AddObjectScreen(
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        ImageQuality.values().forEach { quality ->
+                        ImageQuality.entries.forEach { quality ->
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()

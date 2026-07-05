@@ -21,7 +21,7 @@ class MapViewModel : ViewModel() {
         val isLoading: Boolean = false,
         val currentLocation: LatLng? = null,
         val mapObjects: List<MapObject> = emptyList(),
-        val allMapObjects: List<MapObject> = emptyList(), // NOVO: Čuva sve objekte
+        val allMapObjects: List<MapObject> = emptyList(),
         val selectedObject: MapObject? = null,
         val error: String? = null,
         val filterState: veljko.najdanovic19273.fitmap.data.model.FilterState = veljko.najdanovic19273.fitmap.data.model.FilterState() // NOVO: Filter state
@@ -36,8 +36,7 @@ class MapViewModel : ViewModel() {
 
     init {
         loadMapObjects()
-        // Postavi test lokaciju (Niš centar)
-        setCurrentLocation(43.3209, 21.8958)
+
     }
 
     // Učitavanje svih objekata sa mape iz Firestore-a
@@ -312,19 +311,26 @@ class MapViewModel : ViewModel() {
     fun addComment(
         objectId: String,
         authorId: String,
-        authorName: String,
-        authorImageUrl: String,
         text: String
     ) {
         viewModelScope.launch {
             try {
                 Log.d(TAG, "Dodajem komentar za objekat $objectId")
 
+                // Prvo učitaj korisničke podatke iz Firestore
+                val userSnapshot = firestore.collection(Constants.USERS_COLLECTION)
+                    .document(authorId)
+                    .get()
+                    .await()
+
+                val username = userSnapshot.getString("username") ?: "Nepoznat korisnik"
+                val profileImageUrl = userSnapshot.getString("profileImageUrl") ?: ""
+
                 val comment = veljko.najdanovic19273.fitmap.data.model.Comment(
                     objectId = objectId,
                     authorId = authorId,
-                    authorName = authorName,
-                    authorImageUrl = authorImageUrl,
+                    authorName = username,
+                    authorImageUrl = profileImageUrl,
                     text = text
                 )
 
@@ -470,37 +476,33 @@ class MapViewModel : ViewModel() {
                 Log.d(TAG, "   Tip: ${filter.selectedType?.name ?: "Svi"}")
                 Log.d(TAG, "   Radijus: ${filter.radiusInMeters?.let { "${it}m" } ?: "Sve"}")
                 Log.d(TAG, "   Min ocena: ${if (filter.minRating > 0) "${filter.minRating}⭐" else "Sve"}")
+                Log.d(TAG, "   Trenutna lokacija: ${_state.value.currentLocation}")
                 Log.d(TAG, "═══════════════════════════════════════")
 
+                // VAŽNO: Proveri da li postoji trenutna lokacija ako je potreban radius filter
+                if (filter.radiusInMeters != null && _state.value.currentLocation == null) {
+                    Log.e(TAG, "❌ GREŠKA: Radijus filter je postavljen ali NEMA trenutne lokacije!")
+                    Log.e(TAG, "❌ Filter po radijusu NEĆE raditi dok se ne dobije GPS lokacija!")
+                    _state.value = _state.value.copy(
+                        error = "Čekam GPS lokaciju... Filter po radijusu će raditi kada se lokacija dobije."
+                    )
+                    // NE vraćaj se - nastavi sa ostalim filterima
+                }
+
                 var filteredObjects = _state.value.allMapObjects
+                Log.d(TAG, "   📦 Počinjemo sa ${filteredObjects.size} ukupnih objekata")
 
                 // 1. Filter po pretrazi (naziv ili opis)
-                if (filter.searchQuery.isNotBlank()) {
+                val hasSearchQuery = filter.searchQuery.isNotBlank()
+                if (hasSearchQuery) {
                     filteredObjects = filteredObjects.filter { obj ->
                         obj.title.contains(filter.searchQuery, ignoreCase = true) ||
                         obj.description.contains(filter.searchQuery, ignoreCase = true)
                     }
                     Log.d(TAG, "   ✓ Posle pretrage: ${filteredObjects.size} objekata")
-
-                    // NOVO: Dodaj roditeljske teretane za pronađene child objekte
-                    val parentGymIds = filteredObjects
-                        .filter { it.parentGymId != null }
-                        .mapNotNull { it.parentGymId }
-                        .distinct()
-
-                    val parentGyms = _state.value.allMapObjects.filter { gym ->
-                        gym.type == veljko.najdanovic19273.fitmap.data.model.ObjectType.GYM &&
-                        parentGymIds.contains(gym.id)
-                    }
-
-                    // Kombinuj pronađene objekte sa njihovim roditeljskim teretanama
-                    filteredObjects = (filteredObjects + parentGyms).distinctBy { it.id }
-
-                    Log.d(TAG, "   ✓ Dodato ${parentGyms.size} roditeljskih teretana")
-                    Log.d(TAG, "   ✓ Ukupno objekata sa roditeljima: ${filteredObjects.size}")
                 }
 
-                // 2. Filter po tipu objekta
+                // 2. Filter po tipu objekta (PRVO primeni tip filter)
                 if (filter.selectedType != null) {
                     filteredObjects = filteredObjects.filter { obj ->
                         obj.type == filter.selectedType
@@ -509,16 +511,24 @@ class MapViewModel : ViewModel() {
                 }
 
                 // 3. Filter po radijusu (ako je postavljen i ako postoji trenutna lokacija)
-                if (filter.radiusInMeters != null && _state.value.currentLocation != null) {
-                    val currentLoc = _state.value.currentLocation!!
-                    filteredObjects = filteredObjects.filter { obj ->
-                        val distance = calculateDistance(
-                            currentLoc.latitude, currentLoc.longitude,
-                            obj.location.latitude, obj.location.longitude
-                        )
-                        distance <= filter.radiusInMeters
+                if (filter.radiusInMeters != null) {
+                    if (_state.value.currentLocation != null) {
+                        val currentLoc = _state.value.currentLocation!!
+                        Log.d(TAG, "   📍 Trenutna lokacija: ${currentLoc.latitude}, ${currentLoc.longitude}")
+                        Log.d(TAG, "   📏 Filtriram objekte u radijusu od ${filter.radiusInMeters}m")
+
+                        filteredObjects = filteredObjects.filter { obj ->
+                            val distance = calculateDistance(
+                                currentLoc.latitude, currentLoc.longitude,
+                                obj.location.latitude, obj.location.longitude
+                            )
+                            Log.d(TAG, "      - ${obj.title}: ${distance.toInt()}m (${if (distance <= filter.radiusInMeters) "✅ UKLJUČEN" else "❌ ISKLJUČEN"})")
+                            distance <= filter.radiusInMeters
+                        }
+                        Log.d(TAG, "   ✅ Posle filtera po radijusu: ${filteredObjects.size} objekata")
+                    } else {
+                        Log.e(TAG, "   ⚠️ PRESKAČEM radijus filter - nema trenutne lokacije!")
                     }
-                    Log.d(TAG, "   ✓ Posle filtera po radijusu: ${filteredObjects.size} objekata")
                 }
 
                 // 4. Filter po minimalnoj oceni
@@ -529,15 +539,60 @@ class MapViewModel : ViewModel() {
                     Log.d(TAG, "   ✓ Posle filtera po oceni: ${filteredObjects.size} objekata")
                 }
 
+                // 5. NOVO: Dodaj roditeljske teretane SAMO ako je search query aktivan
+                // i SAMO ako te teretane zadovoljavaju sve ostale filtere
+                if (hasSearchQuery) {
+                    val childObjects = filteredObjects.filter { it.parentGymId != null }
+                    val parentGymIds = childObjects.mapNotNull { it.parentGymId }.distinct()
+
+                    if (parentGymIds.isNotEmpty()) {
+                        Log.d(TAG, "   🔍 Tražim roditeljske teretane za ${parentGymIds.size} ID-eva...")
+
+                        var parentGyms = _state.value.allMapObjects.filter { gym ->
+                            gym.type == veljko.najdanovic19273.fitmap.data.model.ObjectType.GYM &&
+                            parentGymIds.contains(gym.id)
+                        }
+
+                        Log.d(TAG, "   ✓ Pronađeno ${parentGyms.size} roditeljskih teretana")
+
+
+                        if (filter.radiusInMeters != null && _state.value.currentLocation != null) {
+                            val currentLoc = _state.value.currentLocation!!
+                            parentGyms = parentGyms.filter { gym ->
+                                val distance = calculateDistance(
+                                    currentLoc.latitude, currentLoc.longitude,
+                                    gym.location.latitude, gym.location.longitude
+                                )
+                                distance <= filter.radiusInMeters
+                            }
+                            Log.d(TAG, "   ✓ Posle radijus filtera: ${parentGyms.size} roditeljskih teretana")
+                        }
+
+                        if (filter.minRating > 0) {
+                            parentGyms = parentGyms.filter { gym ->
+                                gym.averageRating >= filter.minRating
+                            }
+                            Log.d(TAG, "   ✓ Posle ocena filtera: ${parentGyms.size} roditeljskih teretana")
+                        }
+
+                        // Kombinuj pronađene objekte sa njihovim roditeljskim teretanama
+                        filteredObjects = (filteredObjects + parentGyms).distinctBy { it.id }
+                        Log.d(TAG, "   ✅ Dodato ${parentGyms.size} validnih roditeljskih teretana")
+                    }
+                }
+
                 Log.d(TAG, "═══════════════════════════════════════")
                 Log.d(TAG, "✅ UKUPNO FILTRIRANIH OBJEKATA: ${filteredObjects.size}")
                 val gymCount = filteredObjects.filter { it.type == veljko.najdanovic19273.fitmap.data.model.ObjectType.GYM }.size
-                Log.d(TAG, "✅ OD TOGA TERETANA: $gymCount")
+                val childCount = filteredObjects.filter { it.type != veljko.najdanovic19273.fitmap.data.model.ObjectType.GYM }.size
+                Log.d(TAG, "   📍 Teretana: $gymCount")
+                Log.d(TAG, "   💪 Child objekata: $childCount")
                 Log.d(TAG, "═══════════════════════════════════════")
 
                 _state.value = _state.value.copy(
                     mapObjects = filteredObjects,
-                    filterState = filter
+                    filterState = filter,
+                    error = null // Očisti grešku ako je filter uspešno primenjen
                 )
             } catch (e: Exception) {
                 Log.e(TAG, "Greška pri primeni filtera", e)
@@ -551,5 +606,208 @@ class MapViewModel : ViewModel() {
             mapObjects = _state.value.allMapObjects,
             filterState = veljko.najdanovic19273.fitmap.data.model.FilterState()
         )
+    }
+
+    // NOVO: Real-time listener za detalje objekta
+    fun observeObjectDetails(
+        objectId: String,
+        onResult: (MapObject?, List<veljko.najdanovic19273.fitmap.data.model.Comment>, Float?) -> Unit
+    ): com.google.firebase.firestore.ListenerRegistration {
+
+        val currentUserId = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+
+        // Listener za objekat
+        val objectListener = firestore.collection(Constants.OBJECTS_COLLECTION)
+            .document(objectId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.e(TAG, "❌ Greška pri praćenju objekta: ${error.message}", error)
+                    return@addSnapshotListener
+                }
+
+                if (snapshot == null || !snapshot.exists()) {
+                    Log.e(TAG, "❌ Objekat ne postoji")
+                    onResult(null, emptyList(), null)
+                    return@addSnapshotListener
+                }
+
+                val mapObject = MapObject.fromFirestore(snapshot.id, snapshot.data ?: emptyMap())
+
+                if (mapObject == null) {
+                    Log.e(TAG, "❌ Greška pri parsiranju objekta")
+                    onResult(null, emptyList(), null)
+                    return@addSnapshotListener
+                }
+
+                Log.d(TAG, "🔄 REAL-TIME UPDATE - Objekat: ${mapObject.title}")
+
+                // Učitaj komentare u realnom vremenu
+                firestore.collection(Constants.COMMENTS_COLLECTION)
+                    .whereEqualTo("objectId", objectId)
+                    .addSnapshotListener { commentsSnapshot, commentsError ->
+                        if (commentsError != null) {
+                            Log.e(TAG, "❌ Greška pri praćenju komentara: ${commentsError.message}")
+                            return@addSnapshotListener
+                        }
+
+                        val comments = commentsSnapshot?.documents?.mapNotNull { doc ->
+                            doc.toObject(veljko.najdanovic19273.fitmap.data.model.Comment::class.java)?.copy(id = doc.id)
+                        }?.sortedByDescending { it.createdAt } ?: emptyList()
+
+                        Log.d(TAG, "🔄 REAL-TIME UPDATE - Komentari: ${comments.size}")
+
+                        // Učitaj korisničku ocenu
+                        if (currentUserId != null) {
+                            firestore.collection(Constants.RATINGS_COLLECTION)
+                                .whereEqualTo("objectId", objectId)
+                                .whereEqualTo("authorId", currentUserId)
+                                .addSnapshotListener { ratingsSnapshot, ratingsError ->
+                                    if (ratingsError != null) {
+                                        Log.e(TAG, "❌ Greška pri praćenju ocena")
+                                        return@addSnapshotListener
+                                    }
+
+                                    val userRating = ratingsSnapshot?.documents?.firstOrNull()
+                                        ?.toObject(veljko.najdanovic19273.fitmap.data.model.Rating::class.java)
+                                        ?.value
+
+                                    Log.d(TAG, "🔄 REAL-TIME UPDATE - Ocena: ${userRating ?: "nema"}")
+                                    onResult(mapObject, comments, userRating)
+                                }
+                        } else {
+                            onResult(mapObject, comments, null)
+                        }
+                    }
+            }
+
+        return objectListener
+    }
+
+    // NOVO: Real-time listener za child objekte (sprave u teretani)
+    fun observeChildObjects(
+        parentGymId: String,
+        onResult: (List<MapObject>) -> Unit
+    ): com.google.firebase.firestore.ListenerRegistration {
+        return firestore.collection(Constants.OBJECTS_COLLECTION)
+            .whereEqualTo("parentGymId", parentGymId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.e(TAG, "❌ Greška pri praćenju child objekata: ${error.message}")
+                    onResult(emptyList())
+                    return@addSnapshotListener
+                }
+
+                val childObjects = snapshot?.documents?.mapNotNull { doc ->
+                    MapObject.fromFirestore(doc.id, doc.data ?: emptyMap())
+                } ?: emptyList()
+
+                Log.d(TAG, "🔄 REAL-TIME UPDATE - Child objekti: ${childObjects.size}")
+                onResult(childObjects)
+            }
+    }
+
+   //Real-time listener za sve objekte na mapi
+    fun observeMapObjects() {
+        firestore.collection(Constants.OBJECTS_COLLECTION)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.e(TAG, "❌ Greška pri praćenju objekata na mapi: ${error.message}")
+                    return@addSnapshotListener
+                }
+
+                val objects = snapshot?.documents?.mapNotNull { doc ->
+                    MapObject.fromFirestore(doc.id, doc.data ?: emptyMap())
+                } ?: emptyList()
+
+                Log.d(TAG, "🔄 REAL-TIME UPDATE - Mapa: ${objects.size} objekata")
+
+                _state.value = _state.value.copy(
+                    mapObjects = if (_state.value.filterState.isActive()) {
+                        // Ako je filter aktivan, primeni ga ponovo
+                        applyFilterToObjects(objects, _state.value.filterState)
+                    } else {
+                        objects
+                    },
+                    allMapObjects = objects
+                )
+            }
+    }
+
+    // Helper funkcija za primenu filtera na listu objekata
+    private fun applyFilterToObjects(
+        objects: List<MapObject>,
+        filter: veljko.najdanovic19273.fitmap.data.model.FilterState
+    ): List<MapObject> {
+        var filteredObjects = objects
+
+        // Filter po pretrazi
+        val hasSearchQuery = filter.searchQuery.isNotBlank()
+        if (hasSearchQuery) {
+            filteredObjects = filteredObjects.filter { obj ->
+                obj.title.contains(filter.searchQuery, ignoreCase = true) ||
+                obj.description.contains(filter.searchQuery, ignoreCase = true)
+            }
+        }
+
+        // Filter po tipu
+        if (filter.selectedType != null) {
+            filteredObjects = filteredObjects.filter { obj ->
+                obj.type == filter.selectedType
+            }
+        }
+
+        // Filter po radijusu
+        if (filter.radiusInMeters != null && _state.value.currentLocation != null) {
+            val currentLoc = _state.value.currentLocation!! // trenutna lokacija korisnika
+            filteredObjects = filteredObjects.filter { obj ->
+                val distance = calculateDistance(
+                    currentLoc.latitude, currentLoc.longitude,
+                    obj.location.latitude, obj.location.longitude
+                )
+                distance <= filter.radiusInMeters
+            }
+        }
+
+        // Filter po oceni
+        if (filter.minRating > 0) {
+            filteredObjects = filteredObjects.filter { obj ->
+                obj.averageRating >= filter.minRating
+            }
+        }
+
+        // Dodaj roditeljske teretane
+        if (hasSearchQuery) {
+            val childObjects = filteredObjects.filter { it.parentGymId != null }
+            val parentGymIds = childObjects.mapNotNull { it.parentGymId }.distinct()
+
+            if (parentGymIds.isNotEmpty()) {
+                var parentGyms = objects.filter { gym ->
+                    gym.type == veljko.najdanovic19273.fitmap.data.model.ObjectType.GYM &&
+                    parentGymIds.contains(gym.id)
+                }
+
+                // Primeni filtere na roditeljske teretane
+                if (filter.radiusInMeters != null && _state.value.currentLocation != null) {
+                    val currentLoc = _state.value.currentLocation!!
+                    parentGyms = parentGyms.filter { gym ->
+                        val distance = calculateDistance(
+                            currentLoc.latitude, currentLoc.longitude,
+                            gym.location.latitude, gym.location.longitude
+                        )
+                        distance <= filter.radiusInMeters
+                    }
+                }
+
+                if (filter.minRating > 0) {
+                    parentGyms = parentGyms.filter { gym ->
+                        gym.averageRating >= filter.minRating
+                    }
+                }
+
+                filteredObjects = (filteredObjects + parentGyms).distinctBy { it.id }
+            }
+        }
+
+        return filteredObjects
     }
 }

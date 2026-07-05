@@ -52,22 +52,44 @@ fun ObjectDetailsScreen(
         android.util.Log.d("ObjectDetailsScreen", "═══════════════════════════════════════")
     }
 
-    // Učitaj objekat i komentare
-    LaunchedEffect(objectId) {
-        mapViewModel.loadObjectDetails(objectId) { obj, cmts, rating ->
-            android.util.Log.d("ObjectDetailsScreen", "Callback primljen - objekat: ${obj?.title ?: "NULL"}")
+    // NOVO: Real-time listener za detalje objekta, komentare i ocene
+    DisposableEffect(objectId) {
+        android.util.Log.d("ObjectDetailsScreen", "🔄 Pokrećem REAL-TIME listener za objekat: $objectId")
+
+        val listener = mapViewModel.observeObjectDetails(objectId) { obj, cmts, rating ->
+            android.util.Log.d("ObjectDetailsScreen", "🔄 REAL-TIME UPDATE primljen!")
+            android.util.Log.d("ObjectDetailsScreen", "   - Objekat: ${obj?.title ?: "NULL"}")
+            android.util.Log.d("ObjectDetailsScreen", "   - Komentari: ${cmts.size}")
+            android.util.Log.d("ObjectDetailsScreen", "   - Ocena: ${rating ?: "nema"}")
+
             mapObject = obj
             comments = cmts
             userRating = rating
             isLoading = false
+        }
 
-            // Ako je ovo teretana, učitaj podređene objekte
-            if (obj?.type == veljko.najdanovic19273.fitmap.data.model.ObjectType.GYM) {
-                mapViewModel.loadChildObjects(objectId) { children ->
-                    childObjects = children
-                    android.util.Log.d("ObjectDetailsScreen", "Učitano ${children.size} podređenih objekata")
-                }
+        onDispose {
+            android.util.Log.d("ObjectDetailsScreen", "🛑 Zaustavljam REAL-TIME listener")
+            listener.remove()
+        }
+    }
+
+    // NOVO: Real-time listener za child objekte (ako je teretana)
+    DisposableEffect(objectId, mapObject?.type) {
+        if (mapObject?.type == veljko.najdanovic19273.fitmap.data.model.ObjectType.GYM) {
+            android.util.Log.d("ObjectDetailsScreen", "🔄 Pokrećem REAL-TIME listener za child objekte")
+
+            val childListener = mapViewModel.observeChildObjects(objectId) { children ->
+                android.util.Log.d("ObjectDetailsScreen", "🔄 REAL-TIME UPDATE - Child objekti: ${children.size}")
+                childObjects = children
             }
+
+            onDispose {
+                android.util.Log.d("ObjectDetailsScreen", "🛑 Zaustavljam REAL-TIME listener za child objekte")
+                childListener.remove()
+            }
+        } else {
+            onDispose { }
         }
     }
 
@@ -336,8 +358,6 @@ fun ObjectDetailsScreen(
                                             mapViewModel.addComment(
                                                 objectId = objectId,
                                                 authorId = currentUser.uid,
-                                                authorName = currentUser.displayName ?: "Nepoznat",
-                                                authorImageUrl = currentUser.photoUrl?.toString() ?: "",
                                                 text = commentText
                                             )
                                             commentText = ""
@@ -482,17 +502,32 @@ fun CommentItem(comment: Comment) {
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                // Avatar placeholder
+                // Avatar - prikaži sliku ili inicijal
                 Surface(
                     modifier = Modifier.size(40.dp),
-                    shape = MaterialTheme.shapes.small,
+                    shape = androidx.compose.foundation.shape.CircleShape,
                     color = MaterialTheme.colorScheme.primaryContainer
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = comment.authorName.firstOrNull()?.uppercase() ?: "?",
-                            style = MaterialTheme.typography.titleMedium
+                    if (comment.authorImageUrl.isNotEmpty()) {
+                        // Prikaži profilnu sliku
+                        AsyncImage(
+                            model = comment.authorImageUrl,
+                            contentDescription = "Profilna slika ${comment.authorName}",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
                         )
+                    } else {
+                        // Fallback na inicijal ako nema slike
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            Text(
+                                text = comment.authorName.firstOrNull()?.uppercase() ?: "?",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
                     }
                 }
 
